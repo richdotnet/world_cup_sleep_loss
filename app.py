@@ -173,7 +173,6 @@ STAGE_LABELS = {"group": "Group", "ro16": "Round of 16",
 def fig_choropleth(agg: pd.DataFrame, metric: str) -> go.Figure:
     meta = METRIC_META[metric]
 
-    # Combine Western Sahara (ESH) with Morocco (MAR) — render as one territory
     mar = agg[agg["iso3"] == "MAR"]
     if not mar.empty:
         esh = mar.copy()
