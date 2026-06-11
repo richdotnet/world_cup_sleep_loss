@@ -83,35 +83,58 @@ def main():
         countries = fetch_country_data()
         _LOG.info("          %d countries loaded", len(countries))
 
-    # ── Step 3: Google Trends interest enrichment (best-effort) ─────────────
-    _LOG.info("Step 3/4  Fetching Google Trends interest scores…")
+    # ── Step 3: Interest scores (Elo ratings → Google Trends fallback) ──────
+    _LOG.info("Step 3/4  Fetching interest scores (World Football Elo ratings)…")
+    default_interest = cfg.get("default_interest_score", 0.10)
+    interest_df = None
+
+    # Primary: World Football Elo ratings (eloratings.net) — live, no manual overrides,
+    # naturally reflects post-2022 changes (Morocco surge, etc.)
     try:
-        from src.trends import fetch_trends_interest
-        trends_df = fetch_trends_interest(
-            terms=cfg.get("trends_terms", ["World Cup", "football"]),
-            timeframe=cfg.get("trends_timeframe", "today 12-m"),
-        )
-        if trends_df is not None and not trends_df.empty:
-            before = len(countries)
-            countries = countries.merge(
-                trends_df[["iso3", "interest_score"]], on="iso3", how="left"
-            )
-            n_enriched = countries["interest_score"].notna().sum()
-            _LOG.info(
-                "          Enriched %d / %d countries with Trends interest",
-                n_enriched, before,
-            )
+        from src.data_ingest import fetch_elo_interest
+        interest_df = fetch_elo_interest(default_interest=default_interest)
+        if interest_df is not None and not interest_df.empty:
+            _LOG.info("          Using Elo-based interest scores (%d countries)", len(interest_df))
         else:
-            _LOG.warning("          Google Trends unavailable — using default_interest_score=%.2f",
-                         cfg.get("default_interest_score", 0.10))
+            interest_df = None
     except Exception as exc:
-        _LOG.warning("          Google Trends step skipped: %s", exc)
+        _LOG.warning("          Elo interest step failed: %s", exc)
+
+    # Fallback: Google Trends (re-anchor mean to default_interest_score)
+    if interest_df is None:
+        _LOG.warning("          Falling back to Google Trends…")
+        try:
+            from src.trends import fetch_trends_interest
+            trends_df = fetch_trends_interest(
+                terms=cfg.get("trends_terms", ["World Cup", "football"]),
+                timeframe=cfg.get("trends_timeframe", "today 12-m"),
+            )
+            if trends_df is not None and not trends_df.empty:
+                # Re-anchor: preserve relative rankings, fix absolute level
+                mean_score = trends_df["interest_score"].mean()
+                if mean_score > 0:
+                    trends_df["interest_score"] = (
+                        trends_df["interest_score"] / mean_score * default_interest
+                    )
+                interest_df = trends_df
+                _LOG.info("          Google Trends fallback: %d countries (re-anchored to %.2f mean)",
+                          len(interest_df), default_interest)
+        except Exception as exc:
+            _LOG.warning("          Google Trends fallback skipped: %s", exc)
+
+    if interest_df is not None and not interest_df.empty:
+        countries = countries.merge(
+            interest_df[["iso3", "interest_score"]], on="iso3", how="left"
+        )
+        n_enriched = countries["interest_score"].notna().sum()
+        _LOG.info("          Enriched %d / %d countries with interest scores", n_enriched, len(countries))
+    else:
+        _LOG.warning("          All interest sources unavailable — using default_interest_score=%.2f",
+                     default_interest)
 
     if "interest_score" not in countries.columns:
-        countries["interest_score"] = cfg.get("default_interest_score", 0.10)
-    countries["interest_score"] = countries["interest_score"].fillna(
-        cfg.get("default_interest_score", 0.10)
-    )
+        countries["interest_score"] = default_interest
+    countries["interest_score"] = countries["interest_score"].fillna(default_interest)
 
     # ── Step 4: Simulate + calibrate + aggregate ─────────────────────────────
     _LOG.info("Step 4/4  Running model…")

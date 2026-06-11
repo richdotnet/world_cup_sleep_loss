@@ -25,6 +25,28 @@ _LOG = logging.getLogger(__name__)
 FOOTBALL_DATA_BASE = "https://api.football-data.org/v4"
 WORLD_BANK_BASE    = "https://api.worldbank.org/v2"
 
+# Primary (most-populated) timezone per ISO-2 country code.
+# pytz.country_timezones returns zones alphabetically, not by population,
+# so large multi-zone countries get the wrong zone (e.g. Brazil → America/Noronha
+# instead of America/Sao_Paulo, Australia → Australia/Lord_Howe instead of
+# Australia/Sydney). Override here for any country where that matters.
+_PRIMARY_TIMEZONE: dict = {
+    "BR": "America/Sao_Paulo",       # 90 %+ of population in BRT (UTC-3)
+    "AU": "Australia/Sydney",         # largest metro; east coast majority
+    "RU": "Europe/Moscow",            # ~80 % of population west of Urals
+    "US": "America/New_York",         # Eastern time zone has largest population share
+    "CA": "America/Toronto",          # Ontario/Quebec majority
+    "MX": "America/Mexico_City",      # Central time; ~85 % of population
+    "ID": "Asia/Jakarta",             # Java/Bali; majority of population
+    "CN": "Asia/Shanghai",            # single official tz used nationally
+    "IN": "Asia/Kolkata",             # single tz
+    "KZ": "Asia/Almaty",             # largest city
+    "MN": "Asia/Ulaanbaatar",        # capital
+    "CD": "Africa/Kinshasa",          # majority in west
+    "EC": "America/Guayaquil",        # mainland majority
+    "KI": "Pacific/Tarawa",           # capital atoll
+}
+
 # Map football-data.org stage codes → internal keys used in stage_multipliers
 _STAGE_MAP = {
     "GROUP_STAGE":        "group",
@@ -259,7 +281,7 @@ def fetch_country_data(default_lfp: float = 0.60) -> pd.DataFrame:
         if not country_obj:
             continue                           # skip regional aggregates
         iso2 = country_obj.alpha_2
-        tz   = (pytz.country_timezones.get(iso2) or ["UTC"])[0]
+        tz   = _PRIMARY_TIMEZONE.get(iso2) or (pytz.country_timezones.get(iso2) or ["UTC"])[0]
         lfp  = lfp_data.get(iso3, default_lfp * 100)  # pct or fallback×100
         rows.append({
             "iso3":              iso3,
@@ -278,6 +300,222 @@ def fetch_country_data(default_lfp: float = 0.60) -> pd.DataFrame:
 
     _LOG.info("Loaded %d countries from World Bank (+%d hardcoded)", len(df) - len(extras), len(extras))
     return df
+
+
+# World Football Elo Ratings
+# Source: https://www.eloratings.net/World.tsv  (updated after every match)
+# Column layout (tab-separated): rank · prev_rank · tla · elo · ...
+# The TLA codes follow eloratings.net conventions, which differ from both
+# ISO-3166-1 alpha-2 and FIFA TLAs — see _ELO_TLA_TO_ISO3 below.
+_ELO_RATINGS_URL = "https://www.eloratings.net/World.tsv"
+
+# eloratings.net TLA → ISO-3166-1 alpha-3.
+# Only non-obvious mappings are listed; straightforward 2→3 letter codes
+# (BRA, ARG, FRA, etc.) are handled by pycountry lookup on the full name.
+_ELO_TLA_TO_ISO3: dict = {
+    "EN":  "GBR",   # England (no separate ISO3)
+    "SC":  "GBR",   # Scotland (no separate ISO3; shares GBR — handled below)
+    "WA":  "GBR",   # Wales
+    "NI":  "GBR",   # Northern Ireland
+    "MA":  "MAR",   # Morocco
+    "IR":  "IRN",   # Iran
+    "KO":  "KOR",   # South Korea (eloratings uses KO, not KR)
+    "CI":  "CIV",   # Côte d'Ivoire
+    "GU":  "GUM",   # Guam
+    "TZ":  "TZA",   # Tanzania
+    "BO":  "BOL",   # Bolivia
+    "SL":  "SLE",   # Sierra Leone
+    "ZI":  "ZWE",   # Zimbabwe (old FIFA code)
+    "SO":  "SOM",   # Somalia
+    "BU":  "BDI",   # Burundi (eloratings uses BU)
+    "TO":  "TON",   # Tonga
+    "SA":  "SAU",   # Saudi Arabia
+    "DZ":  "DZA",   # Algeria
+    "SN":  "SEN",   # Senegal
+    "GH":  "GHA",   # Ghana
+    "CM":  "CMR",   # Cameroon
+    "TN":  "TUN",   # Tunisia
+    "EG":  "EGY",   # Egypt
+    "ZA":  "ZAF",   # South Africa
+    "NG":  "NGA",   # Nigeria
+    "ML":  "MLI",   # Mali
+    "CD":  "COD",   # DR Congo
+    "CG":  "COG",   # Congo
+    "MZ":  "MOZ",   # Mozambique
+    "AO":  "AGO",   # Angola
+    "ZM":  "ZMB",   # Zambia
+    "RW":  "RWA",   # Rwanda
+    "UG":  "UGA",   # Uganda
+    "KE":  "KEN",   # Kenya
+    "ET":  "ETH",   # Ethiopia
+    "MG":  "MDG",   # Madagascar
+    "BF":  "BFA",   # Burkina Faso
+    "GW":  "GNB",   # Guinea-Bissau
+    "GN":  "GIN",   # Guinea
+    "LY":  "LBY",   # Libya
+    "SD":  "SDN",   # Sudan
+    "MR":  "MRT",   # Mauritania
+    "NE":  "NER",   # Niger
+    "TD":  "TCD",   # Chad
+    "CF":  "CAF",   # Central African Republic
+    "GA":  "GAB",   # Gabon
+    "BI":  "BDI",   # Burundi
+    "SZ":  "SWZ",   # Eswatini (Swaziland)
+    "LS":  "LSO",   # Lesotho
+    "BW":  "BWA",   # Botswana
+    "NA":  "NAM",   # Namibia
+    "CV":  "CPV",   # Cabo Verde
+    "MU":  "MUS",   # Mauritius
+    "SY":  "SYR",   # Syria
+    "IQ":  "IRQ",   # Iraq
+    "JO":  "JOR",   # Jordan
+    "LB":  "LBN",   # Lebanon
+    "PS":  "PSE",   # Palestine
+    "YE":  "YEM",   # Yemen
+    "OM":  "OMN",   # Oman
+    "BH":  "BHR",   # Bahrain
+    "QA":  "QAT",   # Qatar
+    "KW":  "KWT",   # Kuwait
+    "AE":  "ARE",   # UAE
+    "UZ":  "UZB",   # Uzbekistan
+    "KZ":  "KAZ",   # Kazakhstan
+    "TM":  "TKM",   # Turkmenistan
+    "TJ":  "TJK",   # Tajikistan
+    "KG":  "KGZ",   # Kyrgyzstan
+    "AF":  "AFG",   # Afghanistan
+    "NP":  "NPL",   # Nepal
+    "BD":  "BGD",   # Bangladesh
+    "LK":  "LKA",   # Sri Lanka
+    "MM":  "MMR",   # Myanmar
+    "KH":  "KHM",   # Cambodia
+    "LA":  "LAO",   # Laos
+    "MN":  "MNG",   # Mongolia
+    "MV":  "MDV",   # Maldives
+    "BN":  "BRN",   # Brunei
+    "TL":  "TLS",   # Timor-Leste
+    "FJ":  "FJI",   # Fiji
+    "PG":  "PNG",   # Papua New Guinea
+    "SB":  "SLB",   # Solomon Islands
+    "VU":  "VUT",   # Vanuatu
+    "WS":  "WSM",   # Samoa
+    "CK":  "COK",   # Cook Islands
+    "NU":  "NIU",   # Niue
+    "TO":  "TON",   # Tonga
+    "KI":  "KIR",   # Kiribati
+    "MH":  "MHL",   # Marshall Islands
+    "FM":  "FSM",   # Micronesia
+    "NR":  "NRU",   # Nauru
+    "PW":  "PLW",   # Palau
+    "TV":  "TUV",   # Tuvalu
+    "HT":  "HTI",   # Haiti
+    "JM":  "JAM",   # Jamaica
+    "TT":  "TTO",   # Trinidad & Tobago
+    "BB":  "BRB",   # Barbados
+    "GD":  "GRD",   # Grenada
+    "LC":  "LCA",   # St. Lucia
+    "VC":  "VCT",   # St. Vincent
+    "AG":  "ATG",   # Antigua & Barbuda
+    "KN":  "KNA",   # St. Kitts & Nevis
+    "DM":  "DMA",   # Dominica
+    "BS":  "BHS",   # Bahamas
+    "BZ":  "BLZ",   # Belize
+    "SR":  "SUR",   # Suriname
+    "GY":  "GUY",   # Guyana
+    "CW":  "CUW",   # Curaçao
+    "KS":  "XKX",   # Kosovo
+    "XK":  "XKX",   # Kosovo (alt)
+}
+
+
+def fetch_elo_interest(
+    default_interest: float = 0.10,
+    min_interest: float = 0.04,
+    max_interest: float = 0.45,
+) -> Optional[pd.DataFrame]:
+    """Derive per-country interest scores from live World Football Elo ratings.
+
+    Logic
+    -----
+    Elo ratings measure national team strength from actual match results and are
+    updated after every game — they naturally reflect post-2022 changes (e.g.
+    Morocco's surge after their semi-final run) without any manual overrides.
+
+    Mapping:  interest_score = default_interest * (elo / median_elo_of_all_rated_teams)
+
+    A country whose Elo equals the global median gets exactly ``default_interest``.
+    Top nations (Spain ~2157, Argentina ~2115) score proportionally higher.
+    Lower-rated nations score proportionally less, clamped to ``min_interest``.
+    The simulator's ``max_viewer_ratio`` caps the final viewer fraction at 90 %.
+
+    Returns
+    -------
+    pd.DataFrame with columns: iso3, country, interest_score, elo
+    or None on failure.
+    """
+    try:
+        r = requests.get(_ELO_RATINGS_URL, timeout=15)
+        r.raise_for_status()
+    except Exception as exc:
+        _LOG.warning("Elo ratings unavailable: %s", exc)
+        return None
+
+    rows = []
+    for line in r.text.strip().splitlines():
+        parts = line.split("\t")
+        if len(parts) < 4:
+            continue
+        tla = parts[2].strip().upper()
+        try:
+            elo = float(parts[3].strip())
+        except ValueError:
+            continue
+        rows.append({"tla": tla, "elo": elo})
+
+    if not rows:
+        _LOG.warning("Elo ratings: no rows parsed")
+        return None
+
+    df = pd.DataFrame(rows)
+
+    # Map TLA → ISO3
+    def _tla_to_iso3(tla: str) -> Optional[str]:
+        if tla in _ELO_TLA_TO_ISO3:
+            return _ELO_TLA_TO_ISO3[tla]
+        # Try direct ISO2 lookup (works for BR, FR, DE, JP, etc.)
+        c = pycountry.countries.get(alpha_2=tla)
+        if c:
+            return c.alpha_3
+        # Try ISO3 directly (some entries use 3-letter codes)
+        c = pycountry.countries.get(alpha_3=tla)
+        if c:
+            return c.alpha_3
+        return None
+
+    df["iso3"] = df["tla"].apply(_tla_to_iso3)
+    df = df.dropna(subset=["iso3"])
+
+    # Deduplicate: keep highest Elo when multiple TLAs map to same ISO3
+    df = df.sort_values("elo", ascending=False).drop_duplicates("iso3")
+
+    # Anchor: median-rated country → default_interest
+    median_elo = df["elo"].median()
+    df["interest_score"] = (df["elo"] / median_elo * default_interest).clip(
+        lower=min_interest, upper=max_interest
+    )
+
+    # Carry a readable name from pycountry
+    def _iso3_to_name(iso3: str) -> str:
+        c = pycountry.countries.get(alpha_3=iso3)
+        return c.name if c else iso3
+
+    df["country"] = df["iso3"].apply(_iso3_to_name)
+
+    out = df[["iso3", "country", "interest_score", "elo"]].reset_index(drop=True)
+    _LOG.info(
+        "Elo interest scores: %d countries  (median Elo=%.0f → interest=%.2f)",
+        len(out), median_elo, default_interest,
+    )
+    return out
 
 
 # ---------------------------------------------------------------------------

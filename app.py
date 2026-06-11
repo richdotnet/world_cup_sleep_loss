@@ -324,7 +324,11 @@ def _kpi_card(title: str, value: str, color: str = "#ef4444") -> dbc.Card:
 
 app = dash.Dash(
     __name__,
-    external_stylesheets=[dbc.themes.BOOTSTRAP, "assets/custom.css"],
+    external_stylesheets=[
+        dbc.themes.BOOTSTRAP,
+        "assets/custom.css",
+        "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css",
+    ],
     title="World Cup Sleep Loss",
     assets_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets"),
 )
@@ -414,7 +418,7 @@ app.layout = dbc.Container(
                         dbc.CardBody(dcc.Graph(id="top10-bar")),
                     ], className="h-100"), md=6),
                     dbc.Col(dbc.Card([
-                        dbc.CardHeader("📊  By Tournament Stage"),
+                        dbc.CardHeader("📊  By Tournament Stage (to be completed after group stage)"),
                         dbc.CardBody(dcc.Graph(id="stage-bar")),
                     ], className="h-100"), md=6),
                 ], className="mb-4 g-3"),
@@ -459,18 +463,21 @@ app.layout = dbc.Container(
         # ── Footer ───────────────────────────────────────────────────────────
         html.Footer(
             children=[
+                html.Div(id="footer-econ-impact"),
                 html.Div(
-                    "Sources: football-data.org · World Bank · Google Trends  |  "
-                    "Model: viewer_ratio = interest × stage (own-team only)  |  "
-                    "Sleep loss = overlap(match window, 23:00–07:00 local)  |  "
-                    "Economic loss = sleep_loss × GDP per capita",
-                    id="footer-econ-impact",
-                    style={"fontSize": "0.8rem", "color": "#6b7280"},
+                    html.A(
+                        html.I(className="fab fa-linkedin fa-2x", style={"color": "#0a66c2"}),
+                        href="https://linkedin.com/in/aymeneddaoudi",
+                        target="_blank",
+                        title="Aymen Eddaoudi on LinkedIn",
+                        style={"display": "inline-block", "lineHeight": 0},
+                    ),
+                    style={"marginTop": "1rem", "textAlign": "center"},
                 ),
             ],
             style={
-                "textAlign": "center", "padding": "1.5rem 2rem",
-                "borderTop": "1px solid #e5e7eb", "backgroundColor": "white",
+                "textAlign": "center", "padding": "2rem 2.5rem",
+                "borderTop": "1px solid #e5e7eb", "backgroundColor": "#f9fafb",
                 "marginTop": "3rem",
             },
         ),
@@ -603,16 +610,46 @@ def update_all(n_clicks, metric, stage_filter, country_search):
     )
     
     econ_impact_text = html.Div(
-        [
-            html.Div(
-                "Sources: football-data.org · World Bank · Google Trends  |  "
-                "Model: viewer_ratio = interest × stage (own-team only)  |  "
-                "Sleep loss = overlap(match window, 23:00–07:00 local)  |  "
-                "Economic loss = sleep_loss × GDP per capita",
-                style={"fontSize": "0.8rem", "color": "#6b7280", "marginTop": "0.25rem"},
+        style={"maxWidth": "900px", "margin": "0 auto", "textAlign": "left"},
+        children=[
+            html.H6("Methodology & Sources", style={"fontWeight": 700, "color": "#374151", "marginBottom": "0.75rem", "textAlign": "center"}),
+            dbc.Row([
+                dbc.Col([
+                    html.P("📡  Data sources", style={"fontWeight": 600, "fontSize": "0.8rem", "color": "#374151", "marginBottom": "0.25rem"}),
+                    html.Ul([
+                        html.Li("Match schedule: football-data.org v4 API (live)"),
+                        html.Li("Population & GDP: World Bank Open Data (latest year)"),
+                        html.Li("Football interest: World Football Elo ratings (eloratings.net, updated after every match)"),
+                        html.Li("Labour force participation: World Bank SL.TLF.CACT.ZS"),
+                    ], style={"fontSize": "0.78rem", "color": "#6b7280", "paddingLeft": "1.2rem", "marginBottom": 0}),
+                ], md=4),
+                dbc.Col([
+                    html.P("📐  Viewer model", style={"fontWeight": 600, "fontSize": "0.8rem", "color": "#374151", "marginBottom": "0.25rem"}),
+                    html.Ul([
+                        html.Li([html.Code("viewer_ratio = interest_score × stage_multiplier"), " (capped at 90%)"]),
+                        html.Li("interest_score = Elo / median_Elo × 0.10  →  top nations ~0.16, lower-ranked ~0.04"),
+                        html.Li("Stage multipliers: Group ×1.0 · R16 ×1.2 · QF ×1.5 · SF ×2.0 · Final ×3.0"),
+                        html.Li("Only own-team matches count — no neutral viewership"),
+                    ], style={"fontSize": "0.78rem", "color": "#6b7280", "paddingLeft": "1.2rem", "marginBottom": 0}),
+                ], md=4),
+                dbc.Col([
+                    html.P("😴  Sleep & economic model", style={"fontWeight": 600, "fontSize": "0.8rem", "color": "#374151", "marginBottom": "0.25rem"}),
+                    html.Ul([
+                        html.Li("Sleep window: 23:00–07:00 local time (national default)"),
+                        html.Li([html.Code("sleep_loss = overlap(match window, sleep window)"), " per viewer"]),
+                        html.Li("Match duration: 2 hours (regulation + buffer)"),
+                        html.Li([html.Code("economic_loss = sleep_loss × working_pop_ratio × GDP_per_hour")]),
+                    ], style={"fontSize": "0.78rem", "color": "#6b7280", "paddingLeft": "1.2rem", "marginBottom": 0}),
+                ], md=4),
+            ], className="g-3"),
+            html.Hr(style={"borderColor": "#e5e7eb", "margin": "1rem 0 0.5rem"}),
+            html.P(
+                f"Data refreshed: {_fmt_age(_cache_age_seconds())}  ·  "
+                "Estimates are modelled approximations, not official statistics.  "
+                "Timezone reflects each country's most-populated region.",
+                style={"fontSize": "0.72rem", "color": "#9ca3af", "textAlign": "center", "marginBottom": 0},
             ),
         ],
-        style={"textAlign": "center"},
     )
 
     return (
