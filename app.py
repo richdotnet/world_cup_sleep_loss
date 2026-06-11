@@ -23,7 +23,9 @@ import dash_bootstrap_components as dbc
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 _LOG = logging.getLogger(__name__)
 
-OUTPUT_DIR    = "outputs"
+_ON_VERCEL    = bool(os.environ.get("VERCEL"))
+_BUNDLE_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+OUTPUT_DIR    = "/tmp/outputs" if _ON_VERCEL else "outputs"
 CACHE_TTL_SEC = 24 * 3600          # 24-hour cache
 _STAMP_FILE   = os.path.join(OUTPUT_DIR, ".cache_ts")
 
@@ -51,6 +53,20 @@ def _write_cache_stamp():
 
 def _ensure_outputs(force: bool = False):
     """Run the pipeline only when outputs are missing or the 24-h cache has expired."""
+    if _ON_VERCEL:
+        # Vercel: copy pre-built CSVs from bundled outputs/ into /tmp/outputs (writable).
+        # Never re-run the pipeline — no filesystem writes allowed outside /tmp.
+        import shutil
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        for fname in ("country_aggregates.csv", "country_match_impact.csv",
+                      "stage_aggregates.csv", "top_worst_nights.csv"):
+            dst = os.path.join(OUTPUT_DIR, fname)
+            if not os.path.exists(dst):
+                src = os.path.join(_BUNDLE_DIR, fname)
+                shutil.copy2(src, dst)
+                _LOG.info("Vercel: copied bundled %s → %s", fname, dst)
+        return
+
     needed = [
         os.path.join(OUTPUT_DIR, f)
         for f in ("country_aggregates.csv", "country_match_impact.csv",
@@ -303,8 +319,9 @@ app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.BOOTSTRAP, "assets/custom.css"],
     title="World Cup Sleep Loss",
-    assets_folder="assets",
+    assets_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets"),
 )
+server = app.server  # expose Flask server for Vercel / gunicorn
 
 app.layout = dbc.Container(
     fluid=True,
@@ -476,11 +493,14 @@ app.layout = dbc.Container(
 def update_all(n_clicks, metric, stage_filter, country_search):
     # Re-run pipeline only on explicit refresh click
     if ctx.triggered_id == "refresh-btn" and n_clicks and n_clicks > 0:
-        _LOG.info("Refresh button clicked — forcing pipeline re-run (bypassing cache)…")
-        try:
-            _refresh_cache(force=True)
-        except Exception as exc:
-            _LOG.error("Pipeline refresh failed: %s", exc)
+        if _ON_VERCEL:
+            _LOG.info("Refresh button ignored on Vercel — using bundled data.")
+        else:
+            _LOG.info("Refresh button clicked — forcing pipeline re-run (bypassing cache)…")
+            try:
+                _refresh_cache(force=True)
+            except Exception as exc:
+                _LOG.error("Pipeline refresh failed: %s", exc)
 
     agg   = _Cache.agg
     match = _Cache.match
